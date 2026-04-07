@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
-
+import random
 
 from sqlalchemy.orm import Session
 
@@ -15,13 +15,11 @@ from schemas.user import UserCreate
 
 from utils.security import hash_password, verify_password
 from utils.jwt import create_access_token
-from utils.verification import generate_verification_code
-from utils.email import send_verification_email
 
 router = APIRouter()
 
 @router.post("/register")
-async def register(data: UserCreate, db: Session = Depends(get_db)):
+def register(data: UserCreate, db: Session = Depends(get_db)):
 
     # check if email exists
     existing = db.query(User).filter(User.email == data.user.email).first()
@@ -58,9 +56,7 @@ async def register(data: UserCreate, db: Session = Depends(get_db)):
     # hash password
     hashed_password = hash_password(data.user.password)
 
-    # create user
-    code = generate_verification_code()
-
+    # create user — auto-verified (no email verification required)
     user = User(
         first_name=data.user.first_name,
         last_name=data.user.last_name,
@@ -70,11 +66,8 @@ async def register(data: UserCreate, db: Session = Depends(get_db)):
         role=data.user.role,
         company_id=company.id,
 
-        verification_code=code,
-        verification_expires=datetime.utcnow() + timedelta(minutes=10),
-
         is_active=True,
-        is_verified=False,
+        is_verified=True,
         is_admin=False
     )
 
@@ -82,9 +75,14 @@ async def register(data: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    await send_verification_email(user.email, code)
+    # Return token so the client can log in immediately
+    token = create_access_token(user.id)
 
-    return {"message": "User registered successfully"}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "message": "Account created successfully"
+    }
 
 @router.post("/login")
 def login(
@@ -103,9 +101,6 @@ def login(
     if not db_user.is_active:
         raise HTTPException(status_code=403, detail="Account not active")
 
-    if not db_user.is_verified:
-        raise HTTPException(status_code=403, detail="Account not verified")
-
     token = create_access_token(db_user.id)
 
     return {
@@ -120,6 +115,9 @@ def verify_email(email: str, code: str, db: Session = Depends(get_db)):
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.is_verified:
+        return {"message": "Account already verified"}
 
     if user.verification_code != code:
         raise HTTPException(status_code=400, detail="Invalid code")
@@ -134,3 +132,25 @@ def verify_email(email: str, code: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "Email verified successfully"}
+
+@router.post("/resend-verification")
+async def resend_verification(email: str, db: Session = Depends(get_db)):
+
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_verified:
+        raise HTTPException(status_code=400, detail="Account already verified")
+
+    # generate new code
+    code = str(random.randint(100000, 999999))
+
+    user.verification_code = code
+    user.verification_expires = datetime.utcnow() + timedelta(minutes=10)
+    db.commit()
+
+    await send_verification_email(user.email, code)
+
+    return {"message": "Verification email resent"}
