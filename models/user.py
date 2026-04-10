@@ -23,6 +23,10 @@ class User(Base):
 
     role = Column(String)
 
+    public_id = Column(String(8), unique=True, nullable=True, index=True)
+    avatar_url = Column(String, nullable=True)
+    bio = Column(String, nullable=True)
+
     company_id = Column(Integer, ForeignKey("companies.id"))
 
     company = relationship("Company", back_populates="users")

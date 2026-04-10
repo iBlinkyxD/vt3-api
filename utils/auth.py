@@ -1,8 +1,6 @@
 import os
-from dotenv import load_dotenv
 
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Request
 from jose import jwt
 from sqlalchemy.orm import Session
 
@@ -12,13 +10,22 @@ from models.user import User
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
     db: Session = Depends(get_db)
 ):
+    # 1. Try HttpOnly cookie (SSO path)
+    token = request.cookies.get("access_token")
+
+    # 2. Fall back to Authorization: Bearer header (localStorage fallback)
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -36,6 +43,7 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
+
 
 def admin_required(current_user: User = Depends(get_current_user)):
     if not current_user.is_admin:

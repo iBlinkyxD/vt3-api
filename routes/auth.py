@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
 import random
@@ -18,8 +20,24 @@ from utils.jwt import create_access_token
 
 router = APIRouter()
 
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None  # None = no domain attr (localhost-friendly)
+
+
+def _set_auth_cookie(response: Response, token: str):
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="none" if COOKIE_SECURE else "lax",
+        max_age=86400,  # 24 h, matches JWT expiry
+        domain=COOKIE_DOMAIN,
+        path="/",
+    )
+
 @router.post("/register")
-def register(data: UserCreate, db: Session = Depends(get_db)):
+def register(response: Response, data: UserCreate, db: Session = Depends(get_db)):
 
     # check if email exists
     existing = db.query(User).filter(User.email == data.user.email).first()
@@ -75,8 +93,13 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
+    # Assign 8-digit zero-padded public ID based on the auto-generated primary key
+    user.public_id = f"{user.id:08d}"
+    db.commit()
+
     # Return token so the client can log in immediately
     token = create_access_token(user.id)
+    _set_auth_cookie(response, token)
 
     return {
         "access_token": token,
@@ -86,6 +109,7 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
@@ -97,16 +121,35 @@ def login(
 
     if not verify_password(form_data.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     if not db_user.is_active:
         raise HTTPException(status_code=403, detail="Account not active")
 
     token = create_access_token(db_user.id)
+    _set_auth_cookie(response, token)
 
     return {
         "access_token": token,
         "token_type": "bearer"
     }
+
+
+@router.post("/logout")
+def logout(response: Response):
+    # Use set_cookie with max_age=0 rather than delete_cookie — this is
+    # guaranteed to clear the cookie because it uses the exact same attributes
+    # that were used when setting it, so the browser matches and expires it.
+    response.set_cookie(
+        key="access_token",
+        value="",
+        max_age=0,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="none" if COOKIE_SECURE else "lax",
+        domain=COOKIE_DOMAIN,
+        path="/",
+    )
+    return {"message": "Logged out"}
 
 @router.post("/verify-email")
 def verify_email(email: str, code: str, db: Session = Depends(get_db)):
