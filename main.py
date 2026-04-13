@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,9 +9,24 @@ import models.submission   # noqa: F401 — ensures Submission table is created 
 
 app = FastAPI()
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://vt3.ai",
+    "https://www.vt3.ai",
+    "https://app.vt3.ai",
+    "https://dev.vt3.ai",
+    "https://dev-app.vt3.ai",
+]
+
+# Allow any extra origins injected via environment variable (comma-separated)
+extra = os.getenv("EXTRA_CORS_ORIGINS", "")
+if extra:
+    ALLOWED_ORIGINS.extend([o.strip() for o in extra.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
