@@ -15,5 +15,6 @@ class Opportunity(Base):
     typical_check_size = Column(Float)
 
     first_investor_passed = Column(String)
+    opp_cost_email_frequency = Column(String, default="monthly")
 
     company = relationship("Company", back_populates="opportunity")

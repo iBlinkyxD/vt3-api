@@ -30,3 +30,4 @@ class User(Base):
     company_id = Column(Integer, ForeignKey("companies.id"))
 
     company = relationship("Company", back_populates="users")
+    opp_cost_investors = relationship("OppCostInvestor", back_populates="user", cascade="all, delete-orphan")

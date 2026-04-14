@@ -2,10 +2,12 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
 from database import engine, Base
-from routes import auth, users, company, admin, funding_items, submissions
-import models.sponsorship  # noqa: F401 — ensures Sponsorship table is created by create_all
-import models.submission   # noqa: F401 — ensures Submission table is created by create_all
+from routes import auth, users, company, admin, funding_items, submissions, opp_cost
+import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
+import models.submission        # noqa: F401 — ensures Submission table is created by create_all
+import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
 
 app = FastAPI()
 
@@ -35,9 +37,17 @@ app.add_middleware(
 # Create tables in PostgreSQL
 Base.metadata.create_all(bind=engine)
 
+# Lightweight column migrations — safe to run on every startup (IF NOT EXISTS)
+with engine.connect() as _conn:
+    _conn.execute(text(
+        "ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opp_cost_email_frequency VARCHAR DEFAULT 'monthly'"
+    ))
+    _conn.commit()
+
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(company.router)
 app.include_router(admin.router)
 app.include_router(funding_items.router)
 app.include_router(submissions.router)
+app.include_router(opp_cost.router)
