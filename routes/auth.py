@@ -17,6 +17,7 @@ from schemas.user import UserCreate
 
 from utils.security import hash_password, verify_password
 from utils.jwt import create_access_token
+from utils.email import send_verification_email
 
 router = APIRouter()
 
@@ -74,7 +75,11 @@ def register(response: Response, data: UserCreate, db: Session = Depends(get_db)
     # hash password
     hashed_password = hash_password(data.user.password)
 
-    # create user — auto-verified (no email verification required)
+    # Generate verification code
+    code = str(random.randint(100000, 999999))
+    expires = datetime.utcnow() + timedelta(minutes=10)
+
+    # Create user — unverified until email confirmed
     user = User(
         first_name=data.user.first_name,
         last_name=data.user.last_name,
@@ -84,27 +89,31 @@ def register(response: Response, data: UserCreate, db: Session = Depends(get_db)
         role=data.user.role,
         company_id=company.id,
 
-        is_active=True,
-        is_verified=True,
-        is_admin=False
+        is_active=False,
+        is_verified=False,
+        is_admin=False,
+
+        verification_code=code,
+        verification_expires=expires,
     )
 
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    # Assign 8-digit zero-padded public ID based on the auto-generated primary key
+    # Assign 8-digit zero-padded public ID
     user.public_id = f"{user.id:08d}"
     db.commit()
 
-    # Return token so the client can log in immediately
-    token = create_access_token(user.id)
-    _set_auth_cookie(response, token)
+    # Send verification email (sync Resend call)
+    try:
+        send_verification_email(user.email, code)
+    except Exception:
+        pass  # don't block registration if email fails; user can resend
 
     return {
-        "access_token": token,
-        "token_type": "bearer",
-        "message": "Account created successfully"
+        "email": user.email,
+        "message": "Account created. Check your email for the verification code."
     }
 
 @router.post("/login")
@@ -152,15 +161,18 @@ def logout(response: Response):
     return {"message": "Logged out"}
 
 @router.post("/verify-email")
-def verify_email(email: str, code: str, db: Session = Depends(get_db)):
+def verify_email(email: str, code: str, response: Response, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if user.is_verified:
-        return {"message": "Account already verified"}
+        # Already verified — just issue a token so the client can proceed
+        token = create_access_token(user.id)
+        _set_auth_cookie(response, token)
+        return {"access_token": token, "token_type": "bearer"}
 
     if user.verification_code != code:
         raise HTTPException(status_code=400, detail="Invalid code")
@@ -169,15 +181,19 @@ def verify_email(email: str, code: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Code expired")
 
     user.is_verified = True
+    user.is_active = True
     user.verification_code = None
     user.verification_expires = None
 
     db.commit()
 
-    return {"message": "Email verified successfully"}
+    token = create_access_token(user.id)
+    _set_auth_cookie(response, token)
+
+    return {"access_token": token, "token_type": "bearer", "message": "Email verified successfully"}
 
 @router.post("/resend-verification")
-async def resend_verification(email: str, db: Session = Depends(get_db)):
+def resend_verification(email: str, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.email == email).first()
 
@@ -187,13 +203,14 @@ async def resend_verification(email: str, db: Session = Depends(get_db)):
     if user.is_verified:
         raise HTTPException(status_code=400, detail="Account already verified")
 
-    # generate new code
     code = str(random.randint(100000, 999999))
-
     user.verification_code = code
     user.verification_expires = datetime.utcnow() + timedelta(minutes=10)
     db.commit()
 
-    await send_verification_email(user.email, code)
+    try:
+        send_verification_email(user.email, code)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send email")
 
     return {"message": "Verification email resent"}

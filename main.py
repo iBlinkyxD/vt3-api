@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 from database import engine, Base
@@ -43,6 +44,8 @@ with engine.connect() as _conn:
         "ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opp_cost_email_frequency VARCHAR DEFAULT 'monthly'"
     ))
     _conn.commit()
+
+app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 app.include_router(auth.router)
 app.include_router(users.router)
