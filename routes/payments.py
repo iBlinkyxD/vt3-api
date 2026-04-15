@@ -30,8 +30,8 @@ PRICE_IDS: dict[str, dict[str, str]] = {
     },
 }
 
-SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "http://localhost:3001?stripe=success")
-CANCEL_URL  = os.getenv("STRIPE_CANCEL_URL",  "http://localhost:3000/signup")
+SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "")
+CANCEL_URL  = os.getenv("STRIPE_CANCEL_URL",  "")
 
 
 @router.post("/create-checkout-session", response_model=CheckoutSessionOut)
@@ -93,7 +93,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid Stripe signature")
 
     event_type = event["type"]
-    data_obj   = event["data"]["object"]
+    data_obj   = event["data"]["object"].to_dict()
 
     # ── checkout.session.completed ──────────────────────────────────────────
     if event_type == "checkout.session.completed":
