@@ -22,7 +22,8 @@ from schemas.user import UserCreate
 
 from utils.security import hash_password, verify_password
 from utils.jwt import create_access_token
-from utils.email import send_verification_email
+from utils.email import send_verification_email, send_password_reset_email
+from jose import jwt, JWTError
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
@@ -223,6 +224,61 @@ def resend_verification(email: str, db: Session = Depends(get_db)):
     return {"message": "Verification email resent"}
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM  = "HS256"
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://vt3.ai")
+
+
+@router.post("/forgot-password")
+def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email).first()
+
+    # Always return the same response — don't reveal whether the email exists
+    if user:
+        expire = datetime.utcnow() + timedelta(hours=1)
+        token = jwt.encode(
+            {"user_id": user.id, "purpose": "password_reset", "exp": expire},
+            SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+        reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
+        try:
+            send_password_reset_email(user.email, reset_url)
+        except Exception:
+            pass  # Don't leak errors — log in production
+
+    return {"message": "If that email exists, you'll receive a reset link shortly."}
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(body.token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Reset link is invalid or has expired.")
+
+    if payload.get("purpose") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token.")
+
+    user = db.query(User).filter(User.id == payload.get("user_id")).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    user.password = hash_password(body.new_password)
+    db.commit()
+
+    return {"message": "Password updated successfully."}
+
+
 class GoogleAuthRequest(BaseModel):
     code: str  # Authorization code from the frontend (auth-code flow)
 
@@ -287,8 +343,8 @@ def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depen
         user.public_id = f"{user.id:08d}"
         db.commit()
     else:
-        # Update avatar if changed
-        if avatar_url and user.avatar_url != avatar_url:
+        # Only set Google avatar if the user has no avatar yet (don't overwrite a custom upload)
+        if avatar_url and not user.avatar_url:
             user.avatar_url = avatar_url
             db.commit()
 
