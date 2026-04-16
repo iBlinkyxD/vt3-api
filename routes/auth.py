@@ -3,7 +3,12 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
+from pydantic import BaseModel
 import random
+
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+import requests as http_requests
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +23,8 @@ from schemas.user import UserCreate
 from utils.security import hash_password, verify_password
 from utils.jwt import create_access_token
 from utils.email import send_verification_email
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 router = APIRouter()
 
@@ -214,3 +221,78 @@ def resend_verification(email: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to send email")
 
     return {"message": "Verification email resent"}
+
+
+class GoogleAuthRequest(BaseModel):
+    code: str  # Authorization code from the frontend (auth-code flow)
+
+
+@router.post("/google")
+def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depends(get_db)):
+    # Exchange the authorization code for tokens
+    token_response = http_requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": body.code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+            "redirect_uri": "postmessage",  # required for auth-code flow from JS
+            "grant_type": "authorization_code",
+        },
+    )
+    if token_response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to exchange Google code")
+
+    id_token_str = token_response.json().get("id_token")
+    if not id_token_str:
+        raise HTTPException(status_code=401, detail="No ID token in Google response")
+
+    # Verify the ID token
+    try:
+        info = google_id_token.verify_oauth2_token(
+            id_token_str,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+            clock_skew_in_seconds=10,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {e}")
+
+    email      = info.get("email")
+    first_name = info.get("given_name", "")
+    last_name  = info.get("family_name", "")
+    avatar_url = info.get("picture")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    # Find or create user
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        # Create a minimal user — no company/opportunity rows required for Google sign-in
+        user = User(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            avatar_url=avatar_url,
+            password=None,
+            role="founder",
+            is_active=True,
+            is_verified=True,  # Google already verified the email
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        user.public_id = f"{user.id:08d}"
+        db.commit()
+    else:
+        # Update avatar if changed
+        if avatar_url and user.avatar_url != avatar_url:
+            user.avatar_url = avatar_url
+            db.commit()
+
+    token = create_access_token(user.id)
+    _set_auth_cookie(response, token)
+
+    return {"access_token": token, "token_type": "bearer", "is_new_user": not bool(user.public_id)}

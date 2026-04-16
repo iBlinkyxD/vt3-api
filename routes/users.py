@@ -2,12 +2,16 @@ import os
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from database import get_db
 from utils.auth import get_current_user
 from utils.security import hash_password, verify_password
 from models.user import User
+from models.company import Company
+from models.opportunity import Opportunity
 from schemas.user import UserUpdate, ChangePassword
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -155,3 +159,57 @@ def change_password(
     current_user.password = hash_password(data.new_password)
     db.commit()
     return {"message": "Password updated successfully"}
+
+
+class OnboardingData(BaseModel):
+    company_name: str
+    company_website: Optional[str] = None
+    industry: str
+    company_stage: str
+    year_founded: Optional[int] = None
+    current_valuation: float
+    fundraising_round: str
+    target_raise: float
+    typical_check_size: float
+    first_investor_passed: Optional[str] = None
+
+
+@router.post("/me/onboarding")
+def save_onboarding(
+    data: OnboardingData,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create or update the company and fundraising opportunity for the current user.
+    Used by Google-signup users who skipped the registration form."""
+    # Create or update company
+    if current_user.company_id:
+        company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    else:
+        company = Company()
+        db.add(company)
+        db.flush()  # populate company.id before linking
+        current_user.company_id = company.id
+
+    company.name = data.company_name
+    company.website = data.company_website or None
+    company.industry = data.industry
+    company.stage = data.company_stage
+    company.year_founded = data.year_founded
+
+    db.flush()
+
+    # Create or update opportunity
+    opportunity = db.query(Opportunity).filter(Opportunity.company_id == company.id).first()
+    if not opportunity:
+        opportunity = Opportunity(company_id=company.id)
+        db.add(opportunity)
+
+    opportunity.current_valuation = data.current_valuation
+    opportunity.fundraising_round = data.fundraising_round
+    opportunity.target_raise = data.target_raise
+    opportunity.typical_check_size = data.typical_check_size
+    opportunity.first_investor_passed = data.first_investor_passed or None
+
+    db.commit()
+    return {"message": "Onboarding saved"}

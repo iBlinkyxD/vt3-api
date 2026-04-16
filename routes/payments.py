@@ -64,6 +64,7 @@ def create_checkout_session(
         customer=customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
+        allow_promotion_codes=True,
         success_url=SUCCESS_URL,
         cancel_url=CANCEL_URL,
         metadata={
