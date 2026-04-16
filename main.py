@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 from database import engine, Base
-from routes import auth, users, company, admin, funding_items, submissions, opp_cost
+from routes import auth, users, company, admin, funding_items, submissions, opp_cost, payments
 import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
 import models.submission        # noqa: F401 — ensures Submission table is created by create_all
 import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
@@ -43,6 +43,11 @@ with engine.connect() as _conn:
     _conn.execute(text(
         "ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opp_cost_email_frequency VARCHAR DEFAULT 'monthly'"
     ))
+    # Stripe billing columns
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR UNIQUE"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR DEFAULT 'inactive'"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_id VARCHAR"))
     _conn.commit()
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
@@ -54,3 +59,4 @@ app.include_router(admin.router)
 app.include_router(funding_items.router)
 app.include_router(submissions.router)
 app.include_router(opp_cost.router)
+app.include_router(payments.router)

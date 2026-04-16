@@ -29,5 +29,11 @@ class User(Base):
 
     company_id = Column(Integer, ForeignKey("companies.id"))
 
+    # Stripe billing
+    stripe_customer_id  = Column(String, nullable=True, unique=True)
+    subscription_plan   = Column(String, nullable=True)          # 'light' | 'basic' | 'advanced'
+    subscription_status = Column(String, default="inactive")     # 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled'
+    subscription_id     = Column(String, nullable=True)          # Stripe subscription ID
+
     company = relationship("Company", back_populates="users")
     opp_cost_investors = relationship("OppCostInvestor", back_populates="user", cascade="all, delete-orphan")

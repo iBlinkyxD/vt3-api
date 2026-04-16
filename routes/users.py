@@ -66,6 +66,8 @@ def get_logged_in_user(
             "is_verified": current_user.is_verified,
             "avatar_url": current_user.avatar_url,
             "bio": current_user.bio,
+            "subscription_plan": current_user.subscription_plan,
+            "subscription_status": current_user.subscription_status or "inactive",
         },
         "company": {
             "id": company.id,
