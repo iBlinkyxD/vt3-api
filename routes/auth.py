@@ -3,7 +3,8 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic import EmailStr as _EmailStr
 import random
 
 from google.oauth2 import id_token as google_id_token
@@ -225,12 +226,12 @@ def resend_verification(email: str, db: Session = Depends(get_db)):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    email: _EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 SECRET_KEY = os.getenv("SECRET_KEY")

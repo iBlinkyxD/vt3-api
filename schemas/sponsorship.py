@@ -1,10 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 
 class SponsorshipCreate(BaseModel):
-    units: int
-    display_name: str = "Anonymous"
+    units: int = Field(gt=0)
+    display_name: str = Field(max_length=100, default="Anonymous")
 
 
 class SponsorshipOut(BaseModel):

@@ -6,7 +6,7 @@ import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, EmailStr as _EmailStr
 from typing import Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -244,7 +244,7 @@ def link_google(
 
 
 class SetPasswordRequest(BaseModel):
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 @router.post("/me/set-password")
@@ -262,7 +262,7 @@ def set_password(
 
 
 class EmailChangeRequest(BaseModel):
-    new_email: str
+    new_email: _EmailStr
     current_password: str
 
 
@@ -364,15 +364,15 @@ def cancel_email_change(
 
 
 class OnboardingData(BaseModel):
-    company_name: str
-    company_website: Optional[str] = None
-    industry: str
-    company_stage: str
-    year_founded: Optional[int] = None
-    current_valuation: float
-    fundraising_round: str
-    target_raise: float
-    typical_check_size: float
+    company_name: str = Field(min_length=1, max_length=200)
+    company_website: Optional[str] = Field(None, max_length=255)
+    industry: str = Field(min_length=1, max_length=100)
+    company_stage: str = Field(min_length=1, max_length=100)
+    year_founded: Optional[int] = Field(None, ge=1800, le=2030)
+    current_valuation: float = Field(gt=0)
+    fundraising_round: str = Field(min_length=1, max_length=100)
+    target_raise: float = Field(gt=0)
+    typical_check_size: float = Field(gt=0)
     first_investor_passed: Optional[str] = None
 
 
