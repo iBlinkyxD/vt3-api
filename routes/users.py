@@ -1,8 +1,11 @@
 import os
 import httpx
 import secrets
+import requests as http_requests
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
@@ -183,6 +186,61 @@ def unlink_google(
     current_user.google_linked = False
     db.commit()
     return {"message": "Google unlinked successfully."}
+
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+
+class GoogleLinkRequest(BaseModel):
+    code: str
+
+
+@router.post("/me/link-google")
+def link_google(
+    body: GoogleLinkRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    token_response = http_requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": body.code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+            "redirect_uri": "postmessage",
+            "grant_type": "authorization_code",
+        },
+    )
+    if token_response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to exchange Google code")
+
+    id_token_str = token_response.json().get("id_token")
+    if not id_token_str:
+        raise HTTPException(status_code=401, detail="No ID token in Google response")
+
+    try:
+        info = google_id_token.verify_oauth2_token(
+            id_token_str,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+            clock_skew_in_seconds=10,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {e}")
+
+    google_email = info.get("email")
+    if not google_email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    if google_email.lower() != current_user.email.lower():
+        raise HTTPException(status_code=400, detail="This Google account belongs to a different email address.")
+
+    avatar_url = info.get("picture")
+    current_user.google_linked = True
+    if avatar_url and not current_user.avatar_url:
+        current_user.avatar_url = avatar_url
+    db.commit()
+    return {"message": "Google account linked successfully"}
 
 
 class SetPasswordRequest(BaseModel):
