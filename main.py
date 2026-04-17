@@ -48,6 +48,15 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR"))
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR DEFAULT 'inactive'"))
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_id VARCHAR"))
+    # Email change columns
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_email VARCHAR"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_change_token VARCHAR"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_change_expires TIMESTAMP"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_change_cancel_token VARCHAR"))
+    # Session versioning for post-change session invalidation
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 1"))
+    # Google linked flag
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_linked BOOLEAN DEFAULT FALSE"))
     _conn.commit()
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")

@@ -42,6 +42,12 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Validate session version — invalidates old tokens after email change
+    token_session_version = payload.get("session_version", 1)
+    user_session_version = user.session_version if user.session_version is not None else 1
+    if token_session_version != user_session_version:
+        raise HTTPException(status_code=401, detail="Session expired")
+
     return user
 
 

@@ -1,18 +1,23 @@
 import os
 import httpx
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from database import get_db
 from utils.auth import get_current_user
 from utils.security import hash_password, verify_password
+from utils.email import send_email_change_confirmation, send_email_change_notification
 from models.user import User
 from models.company import Company
 from models.opportunity import Opportunity
 from schemas.user import UserUpdate, ChangePassword
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://vt3.ai")
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -72,6 +77,8 @@ def get_logged_in_user(
             "bio": current_user.bio,
             "subscription_plan": current_user.subscription_plan,
             "subscription_status": current_user.subscription_status or "inactive",
+            "has_password": bool(current_user.password),
+            "google_linked": bool(current_user.google_linked),
         },
         "company": {
             "id": company.id,
@@ -153,12 +160,149 @@ def change_password(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if not current_user.password:
+        raise HTTPException(status_code=400, detail="Your account has no password. Use Set Password instead.")
     if not verify_password(data.old_password, current_user.password):
         raise HTTPException(status_code=401, detail="Old password incorrect")
 
     current_user.password = hash_password(data.new_password)
     db.commit()
     return {"message": "Password updated successfully"}
+
+
+@router.post("/me/unlink-google")
+def unlink_google(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user.google_linked:
+        raise HTTPException(status_code=400, detail="Google is not linked to your account.")
+    if not current_user.password:
+        raise HTTPException(status_code=400, detail="Set a password before unlinking Google so you don't lose access to your account.")
+
+    current_user.google_linked = False
+    db.commit()
+    return {"message": "Google unlinked successfully."}
+
+
+class SetPasswordRequest(BaseModel):
+    new_password: str
+
+
+@router.post("/me/set-password")
+def set_password(
+    data: SetPasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.password:
+        raise HTTPException(status_code=400, detail="Your account already has a password. Use Change Password instead.")
+
+    current_user.password = hash_password(data.new_password)
+    db.commit()
+    return {"message": "Password set successfully"}
+
+
+class EmailChangeRequest(BaseModel):
+    new_email: str
+    current_password: str
+
+
+@router.post("/me/request-email-change")
+def request_email_change(
+    data: EmailChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Step 1: Re-authenticate — verify current password before proceeding
+    if not current_user.password:
+        raise HTTPException(status_code=400, detail="Password authentication is not available for your account.")
+    if not verify_password(data.current_password, current_user.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    new_email = data.new_email.strip().lower()
+
+    if new_email == current_user.email:
+        raise HTTPException(status_code=400, detail="That is already your current email address.")
+
+    taken = db.query(User).filter(User.email == new_email).first()
+    if taken:
+        raise HTTPException(status_code=400, detail="That email address is already in use.")
+
+    token = secrets.token_urlsafe(32)
+    cancel_token = secrets.token_urlsafe(32)
+    old_email = current_user.email
+
+    current_user.pending_email = new_email
+    current_user.email_change_token = token
+    current_user.email_change_expires = datetime.utcnow() + timedelta(hours=1)
+    current_user.email_change_cancel_token = cancel_token
+    db.commit()
+
+    confirm_url = f"{FRONTEND_URL}/confirm-email-change?token={token}"
+    cancel_url = f"{FRONTEND_URL}/cancel-email-change?token={cancel_token}"
+
+    # Step 3: Send confirmation link to new email
+    try:
+        send_email_change_confirmation(new_email, confirm_url)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send confirmation email.")
+
+    # Step 4: Send security alert to old email (best-effort — don't block on failure)
+    try:
+        send_email_change_notification(old_email, new_email, cancel_url)
+    except Exception:
+        pass
+
+    return {"message": "Confirmation email sent. Check your new inbox."}
+
+
+@router.get("/me/confirm-email-change")
+def confirm_email_change(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email_change_token == token).first()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired confirmation link.")
+
+    if user.email_change_expires < datetime.utcnow():
+        user.pending_email = None
+        user.email_change_token = None
+        user.email_change_expires = None
+        db.commit()
+        raise HTTPException(status_code=400, detail="This confirmation link has expired. Please request a new one.")
+
+    user.email = user.pending_email
+    user.pending_email = None
+    user.email_change_token = None
+    user.email_change_expires = None
+    user.email_change_cancel_token = None
+    # Step 6: Increment session version to invalidate all existing tokens
+    user.session_version = (user.session_version or 1) + 1
+    db.commit()
+
+    return {"message": "Email updated successfully."}
+
+
+@router.get("/me/cancel-email-change")
+def cancel_email_change(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email_change_cancel_token == token).first()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired cancellation link.")
+
+    user.pending_email = None
+    user.email_change_token = None
+    user.email_change_expires = None
+    user.email_change_cancel_token = None
+    db.commit()
+
+    return {"message": "Email change cancelled."}
 
 
 class OnboardingData(BaseModel):

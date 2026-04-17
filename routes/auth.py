@@ -142,7 +142,7 @@ def login(
     if not db_user.is_active:
         raise HTTPException(status_code=403, detail="Account not active")
 
-    token = create_access_token(db_user.id)
+    token = create_access_token(db_user.id, session_version=db_user.session_version or 1)
     _set_auth_cookie(response, token)
 
     return {
@@ -178,7 +178,7 @@ def verify_email(email: str, code: str, response: Response, db: Session = Depend
 
     if user.is_verified:
         # Already verified — just issue a token so the client can proceed
-        token = create_access_token(user.id)
+        token = create_access_token(user.id, session_version=user.session_version or 1)
         _set_auth_cookie(response, token)
         return {"access_token": token, "token_type": "bearer"}
 
@@ -195,7 +195,7 @@ def verify_email(email: str, code: str, response: Response, db: Session = Depend
 
     db.commit()
 
-    token = create_access_token(user.id)
+    token = create_access_token(user.id, session_version=user.session_version or 1)
     _set_auth_cookie(response, token)
 
     return {"access_token": token, "token_type": "bearer", "message": "Email verified successfully"}
@@ -335,7 +335,8 @@ def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depen
             password=None,
             role="founder",
             is_active=True,
-            is_verified=True,  # Google already verified the email
+            is_verified=True,
+            google_linked=True,
         )
         db.add(user)
         db.commit()
@@ -343,12 +344,18 @@ def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depen
         user.public_id = f"{user.id:08d}"
         db.commit()
     else:
+        # Block Google login if the user explicitly disconnected Google from Settings
+        if not user.google_linked:
+            raise HTTPException(
+                status_code=403,
+                detail="Google login is not enabled for this account. Sign in with your email and password, then reconnect Google from Settings.",
+            )
         # Only set Google avatar if the user has no avatar yet (don't overwrite a custom upload)
         if avatar_url and not user.avatar_url:
             user.avatar_url = avatar_url
-            db.commit()
+        db.commit()
 
-    token = create_access_token(user.id)
+    token = create_access_token(user.id, session_version=user.session_version or 1)
     _set_auth_cookie(response, token)
 
     return {"access_token": token, "token_type": "bearer", "is_new_user": not bool(user.public_id)}

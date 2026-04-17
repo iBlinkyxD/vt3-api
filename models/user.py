@@ -13,6 +13,7 @@ class User(Base):
     phone = Column(String)
 
     password = Column(String)
+    google_linked = Column(Boolean, default=False)
 
     is_active = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
@@ -20,6 +21,13 @@ class User(Base):
 
     verification_code = Column(String, nullable=True)
     verification_expires = Column(DateTime, nullable=True)
+
+    pending_email = Column(String, nullable=True)
+    email_change_token = Column(String, nullable=True)
+    email_change_expires = Column(DateTime, nullable=True)
+    email_change_cancel_token = Column(String, nullable=True)
+
+    session_version = Column(Integer, default=1)
 
     role = Column(String)
 
