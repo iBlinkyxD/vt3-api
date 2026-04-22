@@ -153,6 +153,7 @@ def delete_item(
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
+    db.query(Sponsorship).filter(Sponsorship.item_id == item_id).delete()
     db.delete(item)
     db.commit()
     return {"message": "Item deleted"}

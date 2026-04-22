@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from utils.auth import get_current_user
 from models.user import User
-from schemas.payment import CheckoutSessionCreate, CheckoutSessionOut, BillingPortalOut
+from models.funding_item import FundingItem
+from schemas.payment import (
+    CheckoutSessionCreate, CheckoutSessionOut, BillingPortalOut,
+    ConnectStatusOut, FundItemCheckout, FundItemCheckoutOut,
+)
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -98,17 +102,30 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
     # ── checkout.session.completed ──────────────────────────────────────────
     if event_type == "checkout.session.completed":
-        user_id = data_obj.get("metadata", {}).get("user_id")
-        plan    = data_obj.get("metadata", {}).get("plan")
-        sub_id  = data_obj.get("subscription")
+        payment_type = data_obj.get("metadata", {}).get("payment_type")
 
-        if user_id:
-            user = db.query(User).filter(User.id == int(user_id)).first()
-            if user:
-                user.subscription_status = "active"
-                user.subscription_plan   = plan
-                user.subscription_id     = sub_id
-                db.commit()
+        if payment_type == "fund_item":
+            # Supporter funded a specific item → increment units_funded
+            item_id  = data_obj.get("metadata", {}).get("item_id")
+            quantity = int(data_obj.get("metadata", {}).get("quantity", 1))
+            if item_id:
+                item = db.query(FundingItem).filter(FundingItem.id == int(item_id)).first()
+                if item:
+                    item.units_funded = min(item.units_funded + quantity, item.units_needed)
+                    db.commit()
+        else:
+            # Subscription checkout
+            user_id = data_obj.get("metadata", {}).get("user_id")
+            plan    = data_obj.get("metadata", {}).get("plan")
+            sub_id  = data_obj.get("subscription")
+
+            if user_id:
+                user = db.query(User).filter(User.id == int(user_id)).first()
+                if user:
+                    user.subscription_status = "active"
+                    user.subscription_plan   = plan
+                    user.subscription_id     = sub_id
+                    db.commit()
 
     # ── invoice.payment_succeeded ───────────────────────────────────────────
     elif event_type == "invoice.payment_succeeded":
@@ -234,3 +251,102 @@ def billing_portal(
     )
 
     return {"url": portal_session.url}
+
+
+CONNECT_REFRESH_URL = os.getenv("STRIPE_CONNECT_REFRESH_URL", "")
+CONNECT_RETURN_URL  = os.getenv("STRIPE_CONNECT_RETURN_URL",  "")
+
+
+@router.post("/connect", response_model=CheckoutSessionOut)
+def start_connect_onboarding(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user.stripe_connect_id:
+        account = stripe.Account.create(
+            type="express",
+            email=current_user.email,
+            metadata={"user_id": str(current_user.id)},
+        )
+        current_user.stripe_connect_id = account.id
+        db.commit()
+
+    account_link = stripe.AccountLink.create(
+        account=current_user.stripe_connect_id,
+        refresh_url=CONNECT_REFRESH_URL,
+        return_url=CONNECT_RETURN_URL,
+        type="account_onboarding",
+    )
+    return {"url": account_link.url}
+
+
+@router.get("/connect/status", response_model=ConnectStatusOut)
+def connect_status(
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.stripe_connect_id:
+        return {"connected": False}
+
+    account = stripe.Account.retrieve(current_user.stripe_connect_id)
+    return {"connected": account.charges_enabled}
+
+
+@router.get("/connect/dashboard", response_model=CheckoutSessionOut)
+def connect_dashboard(
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.stripe_connect_id:
+        raise HTTPException(status_code=400, detail="No connected Stripe account found.")
+
+    login_link = stripe.Account.create_login_link(current_user.stripe_connect_id)
+    return {"url": login_link.url}
+
+
+PLATFORM_FEE_PCT = 0.05  # 5% platform fee
+
+
+@router.post("/fund-item", response_model=FundItemCheckoutOut)
+def fund_item_checkout(
+    body: FundItemCheckout,
+    db: Session = Depends(get_db),
+):
+    founder = db.query(User).filter(User.public_id == body.founder_public_id).first()
+    if not founder:
+        raise HTTPException(status_code=404, detail="Founder not found")
+    if not founder.stripe_connect_id:
+        raise HTTPException(status_code=400, detail="Founder has not connected Stripe payouts yet")
+
+    item = db.query(FundingItem).filter(FundingItem.id == body.item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    quantity   = max(1, body.quantity)
+    unit_cents = int(item.price_per_unit * 100)
+    total_cents = unit_cents * quantity
+    fee_cents   = int(total_cents * PLATFORM_FEE_PCT)
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "unit_amount": unit_cents,
+                "product_data": {"name": item.title},
+            },
+            "quantity": quantity,
+        }],
+        payment_intent_data={
+            "application_fee_amount": fee_cents,
+            "transfer_data": {"destination": founder.stripe_connect_id},
+        },
+        success_url=body.return_url + ("&" if "?" in body.return_url else "?") + "funded=success",
+        cancel_url=CANCEL_URL,
+        metadata={
+            "item_id":          str(item.id),
+            "founder_id":       str(founder.id),
+            "quantity":         str(quantity),
+            "payment_type":     "fund_item",
+        },
+    )
+    return {"url": session.url}

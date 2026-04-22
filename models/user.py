@@ -39,6 +39,7 @@ class User(Base):
 
     # Stripe billing
     stripe_customer_id  = Column(String, nullable=True, unique=True)
+    stripe_connect_id   = Column(String, nullable=True, unique=True)  # Stripe Connect Express account
     subscription_plan   = Column(String, nullable=True)          # 'light' | 'basic' | 'advanced'
     subscription_status = Column(String, default="inactive")     # 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled'
     subscription_id     = Column(String, nullable=True)          # Stripe subscription ID
