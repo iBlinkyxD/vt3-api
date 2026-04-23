@@ -18,6 +18,8 @@ from utils.email import send_email_change_confirmation, send_email_change_notifi
 from models.user import User
 from models.company import Company
 from models.opportunity import Opportunity
+from models.funding_item import FundingItem
+from models.submission import Submission
 from schemas.user import UserUpdate, ChangePassword
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://vt3.ai")
@@ -46,6 +48,20 @@ def get_public_profile(public_id: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="Profile not found")
     company = user.company
+
+    # Compute live stats
+    items = db.query(FundingItem).filter(FundingItem.owner_id == user.id).all()
+    total_raised = sum(i.units_funded * i.price_per_unit for i in items)
+    total_needed = sum(i.units_needed * i.price_per_unit for i in items)
+    momentum = round((total_raised / total_needed) * 100) if total_needed > 0 else 0
+
+    advisor_count = (
+        db.query(Submission.advisor_user_id)
+        .filter(Submission.owner_id == user.id, Submission.advisor_user_id.isnot(None))
+        .distinct()
+        .count()
+    )
+
     return {
         "name": f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
         "avatar_url": user.avatar_url,
@@ -53,6 +69,9 @@ def get_public_profile(public_id: str, db: Session = Depends(get_db)):
         "company_name": company.name if company else None,
         "industry": company.industry if company else None,
         "stage": company.stage if company else None,
+        "advisor_count": advisor_count,
+        "total_raised": total_raised,
+        "momentum": momentum,
     }
 
 

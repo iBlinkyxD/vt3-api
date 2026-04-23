@@ -225,6 +225,41 @@ def resend_verification(email: str, db: Session = Depends(get_db)):
     return {"message": "Verification email resent"}
 
 
+class CorrectEmailRequest(BaseModel):
+    old_email: _EmailStr
+    new_email: _EmailStr
+
+
+@router.post("/correct-email")
+def correct_email(body: CorrectEmailRequest, db: Session = Depends(get_db)):
+    if body.old_email == body.new_email:
+        raise HTTPException(status_code=400, detail="New email is the same as the current one.")
+
+    user = db.query(User).filter(User.email == body.old_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found for that email.")
+
+    if user.is_verified:
+        raise HTTPException(status_code=400, detail="Account is already verified. Use Settings to change your email.")
+
+    taken = db.query(User).filter(User.email == body.new_email).first()
+    if taken:
+        raise HTTPException(status_code=409, detail="That email is already in use.")
+
+    code = str(random.randint(100000, 999999))
+    user.email = body.new_email
+    user.verification_code = code
+    user.verification_expires = datetime.utcnow() + timedelta(minutes=10)
+    db.commit()
+
+    try:
+        send_verification_email(body.new_email, code)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send verification email.")
+
+    return {"email": body.new_email, "message": "Email updated. Check your inbox for a new code."}
+
+
 class ForgotPasswordRequest(BaseModel):
     email: _EmailStr
 
