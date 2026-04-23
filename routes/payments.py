@@ -69,6 +69,7 @@ def create_checkout_session(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         allow_promotion_codes=True,
+        payment_method_collection="if_required",
         success_url=SUCCESS_URL,
         cancel_url=CANCEL_URL,
         metadata={
@@ -326,7 +327,6 @@ def fund_item_checkout(
     fee_cents   = int(total_cents * PLATFORM_FEE_PCT)
 
     session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
         mode="payment",
         line_items=[{
             "price_data": {
@@ -336,6 +336,8 @@ def fund_item_checkout(
             },
             "quantity": quantity,
         }],
+        allow_promotion_codes=True,
+        payment_method_collection="if_required",
         payment_intent_data={
             "application_fee_amount": fee_cents,
             "transfer_data": {"destination": founder.stripe_connect_id},
