@@ -57,6 +57,8 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 1"))
     # Google linked flag
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_linked BOOLEAN DEFAULT FALSE"))
+    # Stripe Connect Express account
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_connect_id VARCHAR UNIQUE"))
     _conn.commit()
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
