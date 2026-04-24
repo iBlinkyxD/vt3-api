@@ -9,6 +9,7 @@ from routes import auth, users, company, admin, funding_items, submissions, opp_
 import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
 import models.submission        # noqa: F401 — ensures Submission table is created by create_all
 import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
+import models.preset_item       # noqa: F401 — ensures PresetItem table is created by create_all
 
 app = FastAPI()
 
@@ -60,6 +61,12 @@ with engine.connect() as _conn:
     # Stripe Connect Express account
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_connect_id VARCHAR UNIQUE"))
     _conn.commit()
+
+# Seed preset items on first startup
+from routes.admin import seed_preset_items
+from database import SessionLocal as _SessionLocal
+with _SessionLocal() as _db:
+    seed_preset_items(_db)
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 

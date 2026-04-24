@@ -101,6 +101,7 @@ def get_logged_in_user(
             "subscription_status": current_user.subscription_status or "inactive",
             "has_password": bool(current_user.password),
             "google_linked": bool(current_user.google_linked),
+            "is_admin": bool(current_user.is_admin),
         },
         "company": {
             "id": company.id,
