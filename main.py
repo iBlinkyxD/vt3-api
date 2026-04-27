@@ -61,6 +61,25 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_linked BOOLEAN DEFAULT FALSE"))
     # Stripe Connect Express account
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_connect_id VARCHAR UNIQUE"))
+    # Soft delete flag
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE NOT NULL"))
+    # Sequential public_id sequence — only setval when sequence is behind the current max
+    # (initial migration only — prevents resetting after hard deletes on restart)
+    _conn.execute(text("CREATE SEQUENCE IF NOT EXISTS public_id_seq START WITH 1"))
+    _conn.execute(text("""
+        DO $$
+        DECLARE
+            seq_val bigint;
+            max_pid bigint;
+        BEGIN
+            SELECT last_value INTO seq_val FROM public_id_seq;
+            SELECT COALESCE(MAX(CAST(public_id AS INTEGER)), 0) INTO max_pid
+            FROM users WHERE public_id IS NOT NULL AND public_id ~ '^[0-9]+$';
+            IF seq_val <= max_pid THEN
+                PERFORM setval('public_id_seq', max_pid + 1, false);
+            END IF;
+        END $$;
+    """))
     _conn.commit()
 
 # Seed preset items on first startup

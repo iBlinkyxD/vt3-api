@@ -18,6 +18,7 @@ class User(Base):
     is_active = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
     is_admin = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)
 
     verification_code = Column(String, nullable=True)
     verification_expires = Column(DateTime, nullable=True)

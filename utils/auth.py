@@ -37,10 +37,10 @@ def get_current_user(
     except jwt.JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.is_deleted == False).first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=401, detail="Account not found or has been deleted")
 
     # Validate session version — invalidates old tokens after email change
     token_session_version = payload.get("session_version", 1)

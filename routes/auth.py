@@ -12,6 +12,7 @@ from google.auth.transport import requests as google_requests
 import requests as http_requests
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from database import get_db
 
@@ -51,8 +52,8 @@ def _set_auth_cookie(response: Response, token: str):
 def register(data: UserCreate, db: Session = Depends(get_db)):
     email = data.user.email.lower().strip()
 
-    # Block if a verified account already exists for this email
-    if db.query(User).filter(User.email == email).first():
+    # Block if an active (non-deleted) verified account already exists for this email
+    if db.query(User).filter(User.email == email, User.is_deleted == False).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
     code    = str(random.randint(100000, 999999))
@@ -102,7 +103,7 @@ def login(
     db: Session = Depends(get_db)
 ):
 
-    db_user = db.query(User).filter(User.email == form_data.username).first()
+    db_user = db.query(User).filter(User.email == form_data.username, User.is_deleted == False).first()
 
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -204,8 +205,9 @@ def verify_email(email: str, code: str, response: Response, db: Session = Depend
     db.commit()
     db.refresh(user)
 
-    # Assign public_id now that we have a real DB id
-    user.public_id = f"{user.id:08d}"
+    # Assign public_id from the dedicated sequence (gap-free, independent of DB id)
+    seq = db.execute(text("SELECT nextval('public_id_seq')")).scalar()
+    user.public_id = f"{seq:08d}"
     db.commit()
 
     # Clean up pending record
@@ -374,7 +376,7 @@ def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depen
         raise HTTPException(status_code=400, detail="Google account has no email")
 
     # Find or create user
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == email, User.is_deleted == False).first()
 
     if not user:
         # Create a minimal user — no company/opportunity rows required for Google sign-in
@@ -392,7 +394,8 @@ def google_auth(body: GoogleAuthRequest, response: Response, db: Session = Depen
         db.add(user)
         db.commit()
         db.refresh(user)
-        user.public_id = f"{user.id:08d}"
+        seq = db.execute(text("SELECT nextval('public_id_seq')")).scalar()
+        user.public_id = f"{seq:08d}"
         db.commit()
     else:
         # Block Google login if the user explicitly disconnected Google from Settings

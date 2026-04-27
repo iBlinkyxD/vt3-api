@@ -44,7 +44,7 @@ def _ensure_public_id(user: User, db: Session) -> str:
 @router.get("/public/{public_id}")
 def get_public_profile(public_id: str, db: Session = Depends(get_db)):
     """Unauthenticated — returns a founder's public profile for display on their public pages."""
-    user = db.query(User).filter(User.public_id == public_id).first()
+    user = db.query(User).filter(User.public_id == public_id, User.is_deleted == False).first()
     if not user:
         raise HTTPException(status_code=404, detail="Profile not found")
     company = user.company
