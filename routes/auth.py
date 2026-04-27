@@ -18,6 +18,7 @@ from database import get_db
 from models.user import User
 from models.company import Company
 from models.opportunity import Opportunity
+from models.pending_registration import PendingRegistration
 
 from schemas.user import UserCreate
 
@@ -47,83 +48,52 @@ def _set_auth_cookie(response: Response, token: str):
     )
 
 @router.post("/register")
-def register(response: Response, data: UserCreate, db: Session = Depends(get_db)):
+def register(data: UserCreate, db: Session = Depends(get_db)):
+    email = data.user.email.lower().strip()
 
-    # check if email exists
-    existing = db.query(User).filter(User.email == data.user.email).first()
-
-    if existing:
+    # Block if a verified account already exists for this email
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # create company
-    company = Company(
-        name=data.company.name,
-        website=data.company.website,
-        industry=data.company.industry,
-        stage=data.company.stage,
-        year_founded=data.company.year_founded
-    )
-
-    db.add(company)
-    db.commit()
-    db.refresh(company)
-
-    # create fundraising opportunity
-    opportunity = Opportunity(
-        company_id=company.id,
-        current_valuation=data.fundraising.current_valuation,
-        fundraising_round=data.fundraising.current_round,
-        target_raise=data.fundraising.target_raise,
-        typical_check_size=data.fundraising.typical_check_size,
-        first_investor_passed=data.fundraising.first_investor_passed
-    )
-
-    db.add(opportunity)
-    db.commit()
-
-    # hash password
-    hashed_password = hash_password(data.user.password)
-
-    # Generate verification code
-    code = str(random.randint(100000, 999999))
+    code    = str(random.randint(100000, 999999))
     expires = datetime.utcnow() + timedelta(minutes=10)
 
-    # Create user — unverified until email confirmed
-    user = User(
-        first_name=data.user.first_name,
-        last_name=data.user.last_name,
-        email=data.user.email,
-        phone=data.user.phone,
-        password=hashed_password,
-        role=data.user.role,
-        company_id=company.id,
-
-        is_active=False,
-        is_verified=False,
-        is_admin=False,
-
-        verification_code=code,
-        verification_expires=expires,
-    )
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    # Assign 8-digit zero-padded public ID
-    user.public_id = f"{user.id:08d}"
-    db.commit()
-
-    # Send verification email (sync Resend call)
-    try:
-        send_verification_email(user.email, code)
-    except Exception:
-        pass  # don't block registration if email fails; user can resend
-
-    return {
-        "email": user.email,
-        "message": "Account created. Check your email for the verification code."
+    # Store all signup data temporarily — no DB records created yet
+    payload = {
+        "first_name":        data.user.first_name,
+        "last_name":         data.user.last_name,
+        "phone":             data.user.phone,
+        "password_hash":     hash_password(data.user.password),
+        "role":              data.user.role,
+        "company_name":      data.company.name,
+        "company_website":   data.company.website,
+        "company_industry":  data.company.industry,
+        "company_stage":     data.company.stage,
+        "company_year":      data.company.year_founded,
+        "valuation":         data.fundraising.current_valuation,
+        "round":             data.fundraising.current_round,
+        "target_raise":      data.fundraising.target_raise,
+        "check_size":        data.fundraising.typical_check_size,
+        "first_investor":    data.fundraising.first_investor_passed,
     }
+
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == email).first()
+    if pending:
+        # Replace existing pending record (expired or duplicate attempt)
+        pending.code       = code
+        pending.expires_at = expires
+        pending.data       = payload
+    else:
+        pending = PendingRegistration(email=email, code=code, expires_at=expires, data=payload)
+        db.add(pending)
+    db.commit()
+
+    try:
+        send_verification_email(email, code)
+    except Exception:
+        pass  # don't block signup if email fails; user can resend
+
+    return {"email": email, "message": "Check your email for the verification code."}
 
 @router.post("/login")
 def login(
@@ -171,29 +141,75 @@ def logout(response: Response):
 
 @router.post("/verify-email")
 def verify_email(email: str, code: str, response: Response, db: Session = Depends(get_db)):
+    email = email.lower().strip()
 
-    user = db.query(User).filter(User.email == email).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.is_verified:
-        # Already verified — just issue a token so the client can proceed
-        token = create_access_token(user.id, session_version=user.session_version or 1)
+    # If a verified account already exists just issue a token (idempotent)
+    existing = db.query(User).filter(User.email == email).first()
+    if existing and existing.is_verified:
+        token = create_access_token(existing.id, session_version=existing.session_version or 1)
         _set_auth_cookie(response, token)
         return {"access_token": token, "token_type": "bearer"}
 
-    if user.verification_code != code:
+    # Look up the pending registration
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending registration found for this email")
+
+    if pending.code != code:
         raise HTTPException(status_code=400, detail="Invalid code")
 
-    if user.verification_expires < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Code expired")
+    if pending.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Code expired. Request a new one.")
 
-    user.is_verified = True
-    user.is_active = True
-    user.verification_code = None
-    user.verification_expires = None
+    d = pending.data
 
+    # Create company
+    company = Company(
+        name=d["company_name"],
+        website=d.get("company_website"),
+        industry=d.get("company_industry"),
+        stage=d.get("company_stage"),
+        year_founded=d.get("company_year"),
+    )
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+
+    # Create opportunity
+    opportunity = Opportunity(
+        company_id=company.id,
+        current_valuation=d.get("valuation"),
+        fundraising_round=d.get("round"),
+        target_raise=d.get("target_raise"),
+        typical_check_size=d.get("check_size"),
+        first_investor_passed=d.get("first_investor"),
+    )
+    db.add(opportunity)
+    db.commit()
+
+    # Create user
+    user = User(
+        first_name=d["first_name"],
+        last_name=d["last_name"],
+        email=email,
+        phone=d.get("phone"),
+        password=d["password_hash"],
+        role=d.get("role", "founder"),
+        company_id=company.id,
+        is_active=True,
+        is_verified=True,
+        is_admin=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # Assign public_id now that we have a real DB id
+    user.public_id = f"{user.id:08d}"
+    db.commit()
+
+    # Clean up pending record
+    db.delete(pending)
     db.commit()
 
     token = create_access_token(user.id, session_version=user.session_version or 1)
@@ -203,22 +219,19 @@ def verify_email(email: str, code: str, response: Response, db: Session = Depend
 
 @router.post("/resend-verification")
 def resend_verification(email: str, db: Session = Depends(get_db)):
+    email = email.lower().strip()
 
-    user = db.query(User).filter(User.email == email).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.is_verified:
-        raise HTTPException(status_code=400, detail="Account already verified")
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending registration found for this email")
 
     code = str(random.randint(100000, 999999))
-    user.verification_code = code
-    user.verification_expires = datetime.utcnow() + timedelta(minutes=10)
+    pending.code       = code
+    pending.expires_at = datetime.utcnow() + timedelta(minutes=10)
     db.commit()
 
     try:
-        send_verification_email(user.email, code)
+        send_verification_email(email, code)
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to send email")
 
@@ -232,32 +245,34 @@ class CorrectEmailRequest(BaseModel):
 
 @router.post("/correct-email")
 def correct_email(body: CorrectEmailRequest, db: Session = Depends(get_db)):
-    if body.old_email == body.new_email:
+    old = body.old_email.lower().strip()
+    new = body.new_email.lower().strip()
+
+    if old == new:
         raise HTTPException(status_code=400, detail="New email is the same as the current one.")
 
-    user = db.query(User).filter(User.email == body.old_email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="No account found for that email.")
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == old).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending registration found for that email.")
 
-    if user.is_verified:
-        raise HTTPException(status_code=400, detail="Account is already verified. Use Settings to change your email.")
-
-    taken = db.query(User).filter(User.email == body.new_email).first()
-    if taken:
+    # Block if new email already belongs to a verified account or another pending record
+    if db.query(User).filter(User.email == new).first():
+        raise HTTPException(status_code=409, detail="That email is already in use.")
+    if db.query(PendingRegistration).filter(PendingRegistration.email == new).first():
         raise HTTPException(status_code=409, detail="That email is already in use.")
 
     code = str(random.randint(100000, 999999))
-    user.email = body.new_email
-    user.verification_code = code
-    user.verification_expires = datetime.utcnow() + timedelta(minutes=10)
+    pending.email      = new
+    pending.code       = code
+    pending.expires_at = datetime.utcnow() + timedelta(minutes=10)
     db.commit()
 
     try:
-        send_verification_email(body.new_email, code)
+        send_verification_email(new, code)
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
 
-    return {"email": body.new_email, "message": "Email updated. Check your inbox for a new code."}
+    return {"email": new, "message": "Email updated. Check your inbox for a new code."}
 
 
 class ForgotPasswordRequest(BaseModel):
