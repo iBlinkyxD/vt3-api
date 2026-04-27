@@ -9,7 +9,8 @@ from routes import auth, users, company, admin, funding_items, submissions, opp_
 import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
 import models.submission        # noqa: F401 — ensures Submission table is created by create_all
 import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
-import models.preset_item       # noqa: F401 — ensures PresetItem table is created by create_all
+import models.preset_item            # noqa: F401 — ensures PresetItem table is created by create_all
+import models.pending_registration   # noqa: F401 — ensures PendingRegistration table is created by create_all
 
 app = FastAPI()
 
