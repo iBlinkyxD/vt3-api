@@ -8,6 +8,7 @@ from database import get_db
 from utils.auth import get_current_user
 from models.user import User
 from models.funding_item import FundingItem
+from models.sponsorship import Sponsorship
 from schemas.payment import (
     CheckoutSessionCreate, CheckoutSessionOut, BillingPortalOut,
     ConnectStatusOut, FundItemCheckout, FundItemCheckoutOut,
@@ -106,13 +107,24 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         payment_type = data_obj.get("metadata", {}).get("payment_type")
 
         if payment_type == "fund_item":
-            # Supporter funded a specific item → increment units_funded
-            item_id  = data_obj.get("metadata", {}).get("item_id")
-            quantity = int(data_obj.get("metadata", {}).get("quantity", 1))
+            meta         = data_obj.get("metadata", {})
+            item_id      = meta.get("item_id")
+            quantity     = int(meta.get("quantity", 1))
+            display_name = meta.get("display_name") or "Anonymous"
+            raw_uid      = meta.get("user_id", "")
+            sponsor_uid  = int(raw_uid) if raw_uid else None
+
             if item_id:
                 item = db.query(FundingItem).filter(FundingItem.id == int(item_id)).first()
                 if item:
                     item.units_funded = min(item.units_funded + quantity, item.units_needed)
+                    db.add(Sponsorship(
+                        item_id=item.id,
+                        user_id=sponsor_uid,
+                        display_name=display_name,
+                        units_funded=quantity,
+                        amount_usd=item.price_per_unit * quantity,
+                    ))
                     db.commit()
         else:
             # Subscription checkout
@@ -336,8 +348,6 @@ def fund_item_checkout(
             },
             "quantity": quantity,
         }],
-        allow_promotion_codes=True,
-        payment_method_collection="if_required",
         payment_intent_data={
             "application_fee_amount": fee_cents,
             "transfer_data": {"destination": founder.stripe_connect_id},
@@ -349,6 +359,8 @@ def fund_item_checkout(
             "founder_id":       str(founder.id),
             "quantity":         str(quantity),
             "payment_type":     "fund_item",
+            "display_name":     body.display_name,
+            "user_id":          str(body.user_id) if body.user_id else "",
         },
     )
     return {"url": session.url}

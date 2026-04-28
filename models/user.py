@@ -45,5 +45,7 @@ class User(Base):
     subscription_status = Column(String, default="inactive")     # 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled'
     subscription_id     = Column(String, nullable=True)          # Stripe subscription ID
 
+    paypal_email = Column(String, nullable=True)
+
     company = relationship("Company", back_populates="users")
     opp_cost_investors = relationship("OppCostInvestor", back_populates="user", cascade="all, delete-orphan")

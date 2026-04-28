@@ -53,6 +53,7 @@ def get_public_sponsors(public_id: str, limit: int = 20, db: Session = Depends(g
             amount_usd=s.amount_usd,
             created_at=s.created_at,
             item_title=s.item.title if s.item else "Unknown item",
+            avatar_url=s.user.avatar_url if s.user else None,
         ))
     return result
 

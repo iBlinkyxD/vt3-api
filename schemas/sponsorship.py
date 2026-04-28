@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Optional
 
 
 class SponsorshipCreate(BaseModel):
@@ -15,6 +16,7 @@ class SponsorshipOut(BaseModel):
     amount_usd: float
     created_at: datetime
     item_title: str
+    avatar_url: Optional[str] = None
 
     class Config:
         from_attributes = True

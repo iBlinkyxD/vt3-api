@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
 class CheckoutSessionCreate(BaseModel):
@@ -22,7 +23,9 @@ class FundItemCheckout(BaseModel):
     item_id: int
     quantity: int = 1
     founder_public_id: str
-    return_url: str  # public funding page URL to redirect after payment
+    return_url: str
+    display_name: str = "Anonymous"
+    user_id: Optional[int] = None
 
 
 class FundItemCheckoutOut(BaseModel):

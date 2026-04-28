@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 from database import engine, Base
-from routes import auth, users, company, admin, funding_items, submissions, opp_cost, payments
+from routes import auth, users, company, admin, funding_items, submissions, opp_cost, payments, paypal
 import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
 import models.submission        # noqa: F401 — ensures Submission table is created by create_all
 import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
@@ -63,6 +63,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_connect_id VARCHAR UNIQUE"))
     # Soft delete flag
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE NOT NULL"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS paypal_email VARCHAR"))
     # Sequential public_id sequence — only setval when sequence is behind the current max
     # (initial migration only — prevents resetting after hard deletes on restart)
     _conn.execute(text("CREATE SEQUENCE IF NOT EXISTS public_id_seq START WITH 1"))
@@ -98,3 +99,4 @@ app.include_router(funding_items.router)
 app.include_router(submissions.router)
 app.include_router(opp_cost.router)
 app.include_router(payments.router)
+app.include_router(paypal.router)

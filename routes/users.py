@@ -72,6 +72,8 @@ def get_public_profile(public_id: str, db: Session = Depends(get_db)):
         "advisor_count": advisor_count,
         "total_raised": total_raised,
         "momentum": momentum,
+        "has_paypal": bool(user.paypal_email),
+        "has_stripe": bool(user.stripe_connect_id),
     }
 
 
@@ -102,6 +104,7 @@ def get_logged_in_user(
             "has_password": bool(current_user.password),
             "google_linked": bool(current_user.google_linked),
             "is_admin": bool(current_user.is_admin),
+            "paypal_email": current_user.paypal_email,
         },
         "company": {
             "id": company.id,
@@ -435,3 +438,28 @@ def save_onboarding(
 
     db.commit()
     return {"message": "Onboarding saved"}
+
+
+class PaypalEmailRequest(BaseModel):
+    paypal_email: _EmailStr
+
+
+@router.put("/me/paypal-email")
+def save_paypal_email(
+    data: PaypalEmailRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.paypal_email = str(data.paypal_email).strip().lower()
+    db.commit()
+    return {"message": "PayPal email saved", "paypal_email": current_user.paypal_email}
+
+
+@router.delete("/me/paypal-email")
+def remove_paypal_email(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.paypal_email = None
+    db.commit()
+    return {"message": "PayPal email removed"}
