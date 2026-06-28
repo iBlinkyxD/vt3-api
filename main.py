@@ -5,12 +5,14 @@ from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 from database import engine, Base
-from routes import auth, users, company, admin, funding_items, submissions, opp_cost, payments, paypal
+from routes import auth, users, company, admin, funding_items, submissions, opp_cost, payments, paypal, newsletter, invitations
 import models.sponsorship       # noqa: F401 — ensures Sponsorship table is created by create_all
 import models.submission        # noqa: F401 — ensures Submission table is created by create_all
 import models.opp_cost_investor # noqa: F401 — ensures OppCostInvestor table is created by create_all
 import models.preset_item            # noqa: F401 — ensures PresetItem table is created by create_all
 import models.pending_registration   # noqa: F401 — ensures PendingRegistration table is created by create_all
+import models.newsletter              # noqa: F401 — ensures Newsletter table is created by create_all
+import models.invitation              # noqa: F401 — ensures Invitation table is created by create_all
 
 app = FastAPI()
 
@@ -64,6 +66,12 @@ with engine.connect() as _conn:
     # Soft delete flag
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE NOT NULL"))
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS paypal_email VARCHAR"))
+    # Newsletter — track which invitation captured the email
+    _conn.execute(text("ALTER TABLE newsletter ADD COLUMN IF NOT EXISTS source VARCHAR"))
+    # Invitations — honorific + link expiry controls
+    _conn.execute(text("ALTER TABLE invitations ADD COLUMN IF NOT EXISTS title VARCHAR"))
+    _conn.execute(text("ALTER TABLE invitations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"))
+    _conn.execute(text("ALTER TABLE invitations ADD COLUMN IF NOT EXISTS single_use BOOLEAN DEFAULT FALSE NOT NULL"))
     # Sequential public_id sequence — only setval when sequence is behind the current max
     # (initial migration only — prevents resetting after hard deletes on restart)
     _conn.execute(text("CREATE SEQUENCE IF NOT EXISTS public_id_seq START WITH 1"))
@@ -100,3 +108,5 @@ app.include_router(submissions.router)
 app.include_router(opp_cost.router)
 app.include_router(payments.router)
 app.include_router(paypal.router)
+app.include_router(newsletter.router)
+app.include_router(invitations.router)
