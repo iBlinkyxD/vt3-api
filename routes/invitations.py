@@ -26,7 +26,20 @@ CONTENT_TYPE_EXT = {
     "image/png": "png",
     "image/webp": "webp",
 }
+EXT_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+MAX_IMAGE_BYTES = 5_000_000  # 5 MB
 ASSETS_DIR = "assets"  # mounted at /assets in main.py — used as a local fallback
+
+
+def _sniff_ext(data: bytes) -> str | None:
+    """Identify the real image type from magic bytes (independent of client headers)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
 
 
 def _save_local(request: Request, invitation_id: int, ext: str, data: bytes) -> str:
@@ -126,8 +139,8 @@ async def upload_invitation_image(
     db: Session = Depends(get_db),
     _admin: User = Depends(admin_required),
 ):
-    ext = CONTENT_TYPE_EXT.get(file.content_type or "")
-    if not ext:
+    declared_ext = CONTENT_TYPE_EXT.get(file.content_type or "")
+    if not declared_ext:
         raise HTTPException(status_code=400, detail="Invalid image type. Use JPEG, PNG, or WebP.")
 
     invitation = db.query(Invitation).filter(Invitation.id == invitation_id).first()
@@ -135,7 +148,15 @@ async def upload_invitation_image(
         raise HTTPException(status_code=404, detail="Invitation not found")
 
     file_data = await file.read()
+    if len(file_data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image is too large. Max size is 5 MB.")
 
+    # Trust the actual bytes, not the client-declared Content-Type.
+    ext = _sniff_ext(file_data)
+    if ext is None or ext != declared_ext:
+        raise HTTPException(status_code=400, detail="File is not a valid JPEG, PNG, or WebP image.")
+
+    content_type = EXT_MIME[ext]  # canonical MIME, never the raw client value
     public_url = None
 
     # Prefer Supabase storage when configured; fall back to local assets on any failure.
@@ -149,7 +170,7 @@ async def upload_invitation_image(
                     content=file_data,
                     headers={
                         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-                        "Content-Type": file.content_type or "application/octet-stream",
+                        "Content-Type": content_type,
                         "x-upsert": "true",
                     },
                 )

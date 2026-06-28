@@ -39,6 +39,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Prevent browsers from MIME-sniffing responses (e.g. user-uploaded assets)."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 # Create tables in PostgreSQL
 Base.metadata.create_all(bind=engine)
 

@@ -256,6 +256,93 @@ def send_email_change_notification(old_email: str, new_email: str, cancel_url: s
     })
 
 
+def send_newsletter_welcome_email(email: str) -> None:
+    """Confirm a newsletter signup with a VT3-branded welcome email via Resend."""
+    resend.api_key = os.getenv("RESEND_API_KEY", "")
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="margin:0;padding:0;background-color:#060606;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#060606;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:480px;background-color:#0d0d0d;border:1px solid rgba(255,255,255,0.1);border-radius:16px;overflow:hidden;">
+
+          <!-- Red top bar -->
+          <tr>
+            <td style="background-color:#C8232B;height:3px;"></td>
+          </tr>
+
+          <!-- Logo -->
+          <tr>
+            <td align="center" style="padding:32px 36px 0;">
+              <img src="{LOGO_URL}" alt="VT3" width="80" style="display:block;height:auto;" />
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 36px 40px;">
+              <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#ffffff;text-align:center;">You're in the loop</h1>
+              <p style="margin:0 0 24px;font-size:14px;color:#94a3b8;line-height:1.6;text-align:center;">
+                Thanks for signing up. We'll keep you posted on what we're building at VT3 —
+                no spam, no noise, just the updates that matter.
+              </p>
+
+              <!-- Pillars -->
+              <div style="background-color:#111111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 24px;margin-bottom:24px;">
+                <p style="margin:0 0 10px;font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#64748b;text-align:center;">What we're building around</p>
+                <p style="margin:0;font-size:13px;color:#e2e8f0;line-height:1.8;text-align:center;">
+                  Augmented Intelligence &middot; Blockchain &middot; Quantum Computing
+                </p>
+              </div>
+
+              <!-- CTA -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
+                <tr>
+                  <td align="center">
+                    <a href="{FRONTEND_URL}"
+                       style="display:inline-block;padding:14px 32px;background-color:#C8232B;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:0.2px;">
+                      Explore VT3
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0;font-size:13px;color:#475569;line-height:1.6;text-align:center;">
+                If you didn't sign up for VT3 updates, you can safely ignore this email.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px;border-top:1px solid rgba(255,255,255,0.06);">
+              <p style="margin:0;font-size:12px;color:#334155;text-align:center;">
+                &copy; 2026 VT3 &mdash; All rights reserved
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    resend.Emails.send({
+        "from": FROM_EMAIL,
+        "to": [email],
+        "subject": "You're in the loop — welcome to VT3",
+        "html": html_content,
+    })
+
+
 def send_password_reset_email(email: str, reset_url: str) -> None:
     """Send a password reset link email via Resend."""
     resend.api_key = os.getenv("RESEND_API_KEY", "")
